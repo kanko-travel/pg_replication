@@ -171,8 +171,6 @@ impl<T: Handler> KafkaConcurrentConsumer<T> {
     }
 
     async fn route_message(&self, msg: &BorrowedMessage<'_>) -> Result<(), ReplicationError> {
-        tracing::info!("routing message to appropriate partition handler");
-
         let payload = extract_payload::<T>(msg)?;
 
         // determine the partition to send the message to
@@ -181,6 +179,8 @@ impl<T: Handler> KafkaConcurrentConsumer<T> {
             tracing::warn!("received message for partition that is not assigned to this consumer, will consider this a recoverable error");
             ReplicationError::Recoverable(anyhow!("received message for unassigned partition"))
         })?;
+
+        tracing::info!("routing message to appropriate partition handler");
 
         tx.send((payload, msg.offset())).await.map_err(|err| {
             tracing::error!("send to partition handler channel failed. this is because the receiver has been closed by the handler, which would have been due to a fatal error downstream");
