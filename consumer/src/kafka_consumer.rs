@@ -93,7 +93,7 @@ impl<T: Handler> KafkaConsumer<T> {
 
         let consumer: StreamConsumer<KafkaConsumerContext<T>> = ClientConfig::new()
             .set("group.id", group_id)
-            // .set("auto.offset.reset", "latest")
+            .set("auto.offset.reset", "earliest")
             .set("bootstrap.servers", brokers)
             .set("enable.partition.eof", "false")
             .set("session.timeout.ms", "6000")
