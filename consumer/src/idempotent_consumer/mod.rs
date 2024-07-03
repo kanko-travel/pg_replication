@@ -163,9 +163,13 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
             })?;
 
         // expect the result to have affected exactly 1 row or else there is a synchronization issue.
-        // in this case we emit a recoverable error which will restart the consumer with fresh state
+        // in this case we emit a recoverable error which should restart the consumer with fresh state
         if result.rows_affected() != 1 {
-            tracing::warn!("Stale consumer state detected, will consider this a recoverable error");
+            tracing::warn!("Stale consumer state detected, this is a recoverable error");
+
+            // repair inconsistent state by invalidating cache
+            self.delete_cached_partition_state(topic, partition);
+
             return Err(ReplicationError::Recoverable(anyhow!(
                 "Stale consumer state detected"
             )));

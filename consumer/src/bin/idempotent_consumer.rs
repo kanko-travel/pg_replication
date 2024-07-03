@@ -26,7 +26,12 @@ impl IdempotentApplication for LoggerApp {
 
 #[tokio::main]
 async fn main() {
-    let subscriber = tracing_subscriber::FmtSubscriber::new();
+    let filter = EnvFilter::new("warn,consumer::metrics=info");
+
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_env_filter(filter) // Set the log level to WARN and above
+        .finish();
+
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     start_idempotent_consumer().await

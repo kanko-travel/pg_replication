@@ -13,15 +13,15 @@ async fn main() {
 async fn start_producer() {
     let topic_map = serde_json::json!({
         "inventory": {
-            "name": "inventory",
+            "name": "inventory_2",
             "partition_key": ["organization_id"]
         },
         "room_type": {
-            "name": "inventory",
+            "name": "inventory_2",
             "partition_key": ["organization_id"]
         },
         "rate_plan": {
-            "name": "inventory",
+            "name": "inventory_2",
             "partition_key": ["organization_id"]
         }
     });
