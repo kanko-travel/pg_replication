@@ -34,7 +34,7 @@ tokio = { version = "1.16.1", features = [
     "macros",
     "full",
 ] }
-model = { git = "https://github.com/kanko-travel/model", rev = "b913630" }
+model = { git = "https://github.com/kanko-travel/model" }
 uuid = { version = "1.7", features = ["v4", "serde"] }
 sha2 = { version = "0.9.8", default-features = false }
 hkdf = { version = "0.11.0" }

@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use basic_consumer::BasicConsumer;
 use idempotent_consumer::IdempotentConsumer;
 use kafka_consumer::KafkaConsumer;
-use producer::ReplicationOp;
+pub use producer::ReplicationOp;
 use sqlx::{Postgres, Transaction};
 
 pub use error::ConsumerError;
