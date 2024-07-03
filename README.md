@@ -23,12 +23,16 @@ fn main() {
   let producer = Producer::new(
       // a postgres connection string
       "postgresql://username:password@localhost:5432/database".into(),
+
       // a comma separated list of kafka brokers to connect to
       "localhost:9092".into(),
+
       // what to name the logical replication slot (this slot will be automatically created)
       "slot_1".into(),
+
       // the name of the publication (the tables defined in the topic map must be part of the publication)
       "publication_1".into(),
+
       // the topic map as defined above
       topic_map,
   );
@@ -39,7 +43,7 @@ fn main() {
 ```
 
 ### ReplicationOp
-A record published by the producer is called a `ReplicationOp`, which has the following structure. The published message is JSON encoded using `serde` and `serde_json`. 
+A record published by the producer is called a `ReplicationOp`. The published message is JSON encoded using `serde` and `serde_json`. The structure of `ReplicationOp` is as follows:
 
 ```rust
 #[derive(Serialize, Deserialize, Debug)]
@@ -60,3 +64,10 @@ pub enum Op {
 
 pub type Row = Vec<Option<String>>;
 ```
+
+`col_names` is a list of column names (string) in the order in which row values appear.
+`lsn` is the log sequence number of the transaction that produced the record.
+`seq_id` is a number indicating the order of the operation within the transaction. It is monotonically increasing and increments by exactly one for each subsequent operation.
+`op` is one of Insert, Update or Delete and contains a Row, in the case of an Insert or Delete, or a tuple of (Row, Row) containing the old and new rows respectively.
+
+`Row` is a list of text encoded column values, where column values occur in the same order in the list as their names in `col_names`.
