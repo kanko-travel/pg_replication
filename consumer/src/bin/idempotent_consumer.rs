@@ -1,8 +1,11 @@
+use std::time::Duration;
+
 // use anyhow::anyhow;
 use async_trait::async_trait;
 use consumer::{Consumer, IdempotentApplication};
 use producer::{error::ReplicationError, ReplicationOp};
 use sqlx::{Postgres, Transaction};
+use tracing_subscriber::EnvFilter;
 
 struct LoggerApp {}
 
@@ -16,9 +19,7 @@ impl IdempotentApplication for LoggerApp {
         tracing::info!("handling message");
         tracing::info!("{:?}", op);
 
-        // Err(ReplicationError::Recoverable(anyhow!(
-        //     "HIIII I JUST WANT TO PROCESS THIS MESSAGE AGAIN AND AGAIN AND AGAIN"
-        // )))
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         Ok(())
     }
@@ -39,7 +40,7 @@ async fn main() {
 
 async fn start_idempotent_consumer() {
     let app = LoggerApp {};
-    let consumer = Consumer::new("bravo", vec!["inventory"], "localhost:9092", app);
+    let consumer = Consumer::new("oscar_2", vec!["inventory_2"], "localhost:9092", app);
 
     tracing::info!("starting idempotent consumer");
     consumer
