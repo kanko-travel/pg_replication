@@ -6,13 +6,8 @@ struct BasicApp {}
 
 #[async_trait]
 impl BasicApplication for BasicApp {
-    async fn handle_message(&self, op: &ReplicationOp) -> Result<(), ConsumerError> {
-        tracing::info!("handling message");
-        tracing::info!("{:?}", op);
-
-        // Err(ConsumerError::Recoverable(anyhow!(
-        //     "HIIII I JUST WANT TO PROCESS THIS MESSAGE AGAIN AND AGAIN AND AGAIN"
-        // )))
+    async fn handle_message(&self, _op: &ReplicationOp) -> Result<(), ConsumerError> {
+        // do some processing here
 
         Ok(())
     }

@@ -6,10 +6,10 @@ use producer::ReplicationOp;
 use sqlx::{Postgres, Transaction};
 use tracing_subscriber::EnvFilter;
 
-struct LoggerApp {}
+struct IdempotentApp {}
 
 #[async_trait]
-impl IdempotentApplication for LoggerApp {
+impl IdempotentApplication for IdempotentApp {
     async fn handle_message(
         &self,
         _tx: &mut Transaction<'_, Postgres>,
@@ -38,7 +38,7 @@ async fn main() {
 }
 
 async fn start_idempotent_consumer() {
-    let app = LoggerApp {};
+    let app = IdempotentApp {};
     let consumer = Consumer::new("oscar_2", vec!["inventory_2"], "localhost:9092", app);
 
     tracing::info!("starting idempotent consumer");
