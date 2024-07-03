@@ -163,7 +163,8 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
             })?;
 
         // expect the result to have affected exactly 1 row or else there is a synchronization issue.
-        // in this case we emit a recoverable error which should restart the consumer with fresh state
+        // in this case we invalidate the stale cache and emit a recoverable error, allowing the caller to
+        // call handle_message again
         if result.rows_affected() != 1 {
             tracing::warn!("Stale consumer state detected, this is a recoverable error");
 
@@ -236,7 +237,7 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
                 Ok(())
             }
             Err(err) => {
-                tracing::warn!("transaction commit failure. the database partition state is unknown, invalidating local cache: {}", err);
+                tracing::warn!("transaction commit failure. the remote partition state is unknown, invalidating local cache: {}", err);
                 self.delete_cached_partition_state(topic, partition);
 
                 Err(ReplicationError::Recoverable(anyhow!(
