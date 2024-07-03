@@ -1,17 +1,20 @@
+mod basic_consumer;
+mod db;
+mod error;
+mod idempotent_consumer;
+mod kafka_consumer;
+mod metrics;
+
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use basic_consumer::BasicConsumer;
 use idempotent_consumer::IdempotentConsumer;
 use kafka_consumer::KafkaConsumer;
-use producer::{error::ReplicationError, ReplicationOp};
+use producer::ReplicationOp;
 use sqlx::{Postgres, Transaction};
 
-mod basic_consumer;
-mod db;
-mod idempotent_consumer;
-mod kafka_consumer;
-mod metrics;
+pub use error::ConsumerError;
 
 pub struct Consumer<App> {
     pub group_id: String,
@@ -26,12 +29,12 @@ pub trait IdempotentApplication: Send + Sync + 'static {
         &self,
         _tx: &mut Transaction<'_, Postgres>,
         _op: &ReplicationOp,
-    ) -> Result<(), ReplicationError>;
+    ) -> Result<(), ConsumerError>;
 }
 
 #[async_trait]
 pub trait BasicApplication: Send + Sync + 'static {
-    async fn handle_message(&self, _op: &ReplicationOp) -> Result<(), ReplicationError>;
+    async fn handle_message(&self, _op: &ReplicationOp) -> Result<(), ConsumerError>;
 }
 
 impl<App> Consumer<App> {
@@ -49,10 +52,10 @@ impl<App: IdempotentApplication> Consumer<App> {
     pub async fn start_idempotent(self, connection_string: &str) -> Result<(), anyhow::Error> {
         loop {
             match self.start_idempotent_consumer(connection_string).await {
-                Err(ReplicationError::Recoverable(_)) => {
+                Err(ConsumerError::Recoverable(_)) => {
                     tracing::warn!("failed to create idempotent consumer, will retry");
                 }
-                Err(ReplicationError::Fatal(err)) => {
+                Err(ConsumerError::Fatal(err)) => {
                     tracing::error!("encountered a fatal error, please investigate: {}", err);
                     return Err(err);
                 }
@@ -67,7 +70,7 @@ impl<App: IdempotentApplication> Consumer<App> {
     async fn start_idempotent_consumer(
         &self,
         connection_string: &str,
-    ) -> Result<(), ReplicationError> {
+    ) -> Result<(), ConsumerError> {
         let idempotent_consumer =
             IdempotentConsumer::new(&self.group_id, connection_string, self.app.clone()).await?;
 
@@ -85,10 +88,10 @@ impl<App: BasicApplication> Consumer<App> {
     pub async fn start_basic(self) -> Result<(), anyhow::Error> {
         loop {
             match self.start_basic_consumer().await {
-                Err(ReplicationError::Recoverable(_)) => {
+                Err(ConsumerError::Recoverable(_)) => {
                     tracing::warn!("failed to create idempotent consumer, will retry");
                 }
-                Err(ReplicationError::Fatal(err)) => {
+                Err(ConsumerError::Fatal(err)) => {
                     tracing::error!("encountered a fatal error, please investigate: {}", err);
                     return Err(err);
                 }
@@ -100,7 +103,7 @@ impl<App: BasicApplication> Consumer<App> {
         }
     }
 
-    async fn start_basic_consumer(&self) -> Result<(), ReplicationError> {
+    async fn start_basic_consumer(&self) -> Result<(), ConsumerError> {
         let basic_consumer = BasicConsumer::new(self.app.clone());
 
         let kafka_consumer =

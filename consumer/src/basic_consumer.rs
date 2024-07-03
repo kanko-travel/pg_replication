@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use producer::{error::ReplicationError, ReplicationOp};
+use producer::ReplicationOp;
 
 use crate::{
+    error::ConsumerError,
     kafka_consumer::{Handler, HandlerMessage},
     BasicApplication,
 };
@@ -25,7 +26,7 @@ impl<App: BasicApplication> Handler for BasicConsumer<App> {
     async fn handle_message(
         &self,
         message: &HandlerMessage<'_, Self::Payload>,
-    ) -> Result<(), ReplicationError> {
+    ) -> Result<(), ConsumerError> {
         tracing::info!("handling basic consumer message");
         self.app.handle_message(&message.payload).await
     }

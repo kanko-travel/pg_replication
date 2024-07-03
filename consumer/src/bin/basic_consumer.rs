@@ -1,16 +1,16 @@
 use async_trait::async_trait;
-use consumer::{BasicApplication, Consumer};
-use producer::{error::ReplicationError, ReplicationOp};
+use consumer::{BasicApplication, Consumer, ConsumerError};
+use producer::ReplicationOp;
 
 struct BasicApp {}
 
 #[async_trait]
 impl BasicApplication for BasicApp {
-    async fn handle_message(&self, op: &ReplicationOp) -> Result<(), ReplicationError> {
+    async fn handle_message(&self, op: &ReplicationOp) -> Result<(), ConsumerError> {
         tracing::info!("handling message");
         tracing::info!("{:?}", op);
 
-        // Err(ReplicationError::Recoverable(anyhow!(
+        // Err(ConsumerError::Recoverable(anyhow!(
         //     "HIIII I JUST WANT TO PROCESS THIS MESSAGE AGAIN AND AGAIN AND AGAIN"
         // )))
 

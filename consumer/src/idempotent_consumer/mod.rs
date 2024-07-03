@@ -6,15 +6,16 @@ use std::{collections::HashMap, sync::RwLock};
 use anyhow::anyhow;
 
 use model::{Crud, Migration};
-use producer::{error::ReplicationError, ReplicationOp};
+use producer::ReplicationOp;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 use crate::db::Lock;
+use crate::error::ConsumerError;
 use crate::kafka_consumer::{Handler, HandlerMessage};
 
 use state::State;
 
-use super::IdempotentApplication;
+use crate::IdempotentApplication;
 
 /// IdempotentConsumer processes messages from a given set of topics in partition order. In order to ensure idempotency of
 /// message processing, the consumer (defined by the consumer_group_id) must keep track of the latest
@@ -34,26 +35,24 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
         group_id: &str,
         connection_string: &str,
         app: Arc<App>,
-    ) -> Result<Self, ReplicationError> {
+    ) -> Result<Self, ConsumerError> {
         let pool = PgPool::connect(connection_string).await.map_err(|_| {
-            ReplicationError::Recoverable(anyhow!("db error: treating as recoverable"))
+            ConsumerError::Recoverable(anyhow!("db error: treating as recoverable"))
         })?;
 
         // run migration for state table
         let mut tx = pool.begin().await.map_err(|_| {
-            ReplicationError::Recoverable(anyhow!("db error: begin error, treating as recoverable"))
+            ConsumerError::Recoverable(anyhow!("db error: begin error, treating as recoverable"))
         })?;
 
         State::migrate(&mut tx).await.map_err(|_| {
-            ReplicationError::Recoverable(anyhow!(
+            ConsumerError::Recoverable(anyhow!(
                 "db error: migration error, treating as recoverable"
             ))
         })?;
 
         tx.commit().await.map_err(|_| {
-            ReplicationError::Recoverable(anyhow!(
-                "db error: commit error, treating as recoverable"
-            ))
+            ConsumerError::Recoverable(anyhow!("db error: commit error, treating as recoverable"))
         })?;
 
         let consumer = Self {
@@ -101,7 +100,7 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
         tx: &mut Transaction<'_, Postgres>,
         topic: &str,
         partition: i32,
-    ) -> Result<Option<(u64, u64)>, ReplicationError> {
+    ) -> Result<Option<(u64, u64)>, ConsumerError> {
         let state = State::select()
             .by_field("group_id", self.group_id.clone())
             .by_field("topic", topic.to_string())
@@ -111,21 +110,21 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
             .await
             .map_err(|err| {
                 tracing::warn!("db error: query to select consumer state didn't succeed, will consider this a transiet error: {}", err);
-                ReplicationError::Recoverable(anyhow!("db error: query to select consumer state failed"))
+                ConsumerError::Recoverable(anyhow!("db error: query to select consumer state failed"))
             })?;
 
         if let Some(state) = state {
             // now we parse the lsn and seq_id from the returned row
             let lsn = state.lsn.parse().map_err(|_| {
                 tracing::error!("Failed to decode lsn returned by database. This is a bug!");
-                ReplicationError::Fatal(anyhow!(
+                ConsumerError::Fatal(anyhow!(
                     "Failed to decode lsn returned by database. This is a bug!"
                 ))
             })?;
 
             let seq_id = state.seq_id.parse().map_err(|_| {
                 tracing::error!("Failed to decode seq_id returned by database. This is a bug!");
-                ReplicationError::Fatal(anyhow!(
+                ConsumerError::Fatal(anyhow!(
                     "Failed to decode seq_id returned by database. This is a bug!"
                 ))
             })?;
@@ -146,7 +145,7 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
         current_seq_id: u64,
         lsn: u64,
         seq_id: u64,
-    ) -> Result<(), ReplicationError> {
+    ) -> Result<(), ConsumerError> {
         let result = sqlx::query("UPDATE replication_consumer_state SET lsn = $6, seq_id = $7 WHERE group_id = $1 AND topic = $2 AND partition = $3 AND lsn = $4 AND seq_id = $5")
             .bind(&self.group_id)
             .bind(topic)
@@ -159,7 +158,7 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
             .await
             .map_err(|err| {
                 tracing::warn!("db error: query to update selected consumer state didn't succeed, will consider this a transiet error: {}", err);
-                ReplicationError::Recoverable(anyhow!("db error: query to select consumer state failed"))
+                ConsumerError::Recoverable(anyhow!("db error: query to select consumer state failed"))
             })?;
 
         // expect the result to have affected exactly 1 row or else there is a synchronization issue.
@@ -171,7 +170,7 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
             // repair inconsistent state by invalidating cache
             self.delete_cached_partition_state(topic, partition);
 
-            return Err(ReplicationError::Recoverable(anyhow!(
+            return Err(ConsumerError::Recoverable(anyhow!(
                 "Stale consumer state detected"
             )));
         }
@@ -186,7 +185,7 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
         partition: i32,
         lsn: u64,
         seq_id: u64,
-    ) -> Result<(), ReplicationError> {
+    ) -> Result<(), ConsumerError> {
         let state = State::new(
             &self.group_id,
             topic,
@@ -200,7 +199,7 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
             .await
             .map_err(|err| {
                 tracing::warn!("db error: query to select consumer state didn't succeed, will consider this a transiet error: {}", err);
-                ReplicationError::Recoverable(anyhow!("db error: query to select consumer state failed"))
+                ConsumerError::Recoverable(anyhow!("db error: query to select consumer state failed"))
             })?;
 
         Ok(())
@@ -210,10 +209,10 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
         &self,
         topic: &str,
         partition: i32,
-    ) -> Result<Transaction<'_, Postgres>, ReplicationError> {
+    ) -> Result<Transaction<'_, Postgres>, ConsumerError> {
         let mut tx = self.pool.begin().await.map_err(|err| {
             tracing::warn!("db error: failed to being transaction: {}", err);
-            ReplicationError::Recoverable(anyhow!("db error: failed to begin transaction"))
+            ConsumerError::Recoverable(anyhow!("db error: failed to begin transaction"))
         })?;
 
         let key = format!("{}_{}_{}", self.group_id, topic, partition);
@@ -230,7 +229,7 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
         partition: i32,
         lsn: u64,
         seq_id: u64,
-    ) -> Result<(), ReplicationError> {
+    ) -> Result<(), ConsumerError> {
         match tx.commit().await {
             Ok(_) => {
                 self.set_cached_partition_state(topic, partition, lsn, seq_id);
@@ -240,7 +239,7 @@ impl<App: IdempotentApplication> IdempotentConsumer<App> {
                 tracing::warn!("transaction commit failure. the remote partition state is unknown, invalidating local cache: {}", err);
                 self.delete_cached_partition_state(topic, partition);
 
-                Err(ReplicationError::Recoverable(anyhow!(
+                Err(ConsumerError::Recoverable(anyhow!(
                     "db commit failure, treating this as a recoverable error: {}",
                     err
                 )))
@@ -256,7 +255,7 @@ impl<App: IdempotentApplication> Handler for IdempotentConsumer<App> {
     async fn handle_message(
         &self,
         msg: &HandlerMessage<'_, Self::Payload>,
-    ) -> Result<(), ReplicationError> {
+    ) -> Result<(), ConsumerError> {
         let topic = msg.topic;
         let partition = msg.partition;
 

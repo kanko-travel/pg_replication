@@ -8,8 +8,6 @@ use rdkafka::{
     message::BorrowedMessage,
     ClientConfig, ClientContext, Message,
 };
-
-use producer::error::ReplicationError;
 use serde::Deserialize;
 use tokio::sync::{
     mpsc::{self, Receiver, Sender},
@@ -17,6 +15,7 @@ use tokio::sync::{
     RwLock,
 };
 
+use crate::error::ConsumerError;
 use crate::metrics::Metrics;
 
 pub struct KafkaConsumer<T: Handler> {
@@ -40,7 +39,7 @@ pub trait Handler: Sync + Send + 'static {
     async fn handle_message(
         &self,
         message: &HandlerMessage<'_, Self::Payload>,
-    ) -> Result<(), ReplicationError>;
+    ) -> Result<(), ConsumerError>;
 
     fn assign_partitions(&self, _: Vec<(&str, i32)>) {}
     fn revoke_partitions(&self, _: Vec<(&str, i32)>) {}
@@ -147,7 +146,7 @@ impl<T: Handler> KafkaConsumer<T> {
         brokers: &str,
         topics: &Vec<String>,
         handler: T,
-    ) -> Result<Self, ReplicationError> {
+    ) -> Result<Self, ConsumerError> {
         let handler = Arc::new(handler);
         let partition_senders = Arc::new(RwLock::new(HashMap::new()));
         let (offset_tx, offset_rx) = mpsc::channel(1);
@@ -194,7 +193,7 @@ impl<T: Handler> KafkaConsumer<T> {
         })
     }
 
-    pub async fn consume(self) -> Result<(), ReplicationError> {
+    pub async fn consume(self) -> Result<(), ConsumerError> {
         loop {
             tracing::info!("polling for messages");
             match self.consumer.recv().await {
@@ -202,7 +201,7 @@ impl<T: Handler> KafkaConsumer<T> {
                 Err(err) => {
                     tracing::error!("Potentially unrecoverable kafka error, will treat it as recoverable unless proven otherwise {}", err);
 
-                    return Err(ReplicationError::Recoverable(anyhow!(
+                    return Err(ConsumerError::Recoverable(anyhow!(
                         "Unexpected Kafka error: {}",
                         err
                     )));
@@ -211,21 +210,21 @@ impl<T: Handler> KafkaConsumer<T> {
         }
     }
 
-    async fn route_message(&self, msg: &BorrowedMessage<'_>) -> Result<(), ReplicationError> {
+    async fn route_message(&self, msg: &BorrowedMessage<'_>) -> Result<(), ConsumerError> {
         let payload = extract_payload::<T>(msg)?;
 
         // determine the partition to send the message to
         let partition_senders = self.partition_senders.read().await;
         let (tx, _) = partition_senders.get(&(msg.topic().to_string(), msg.partition())).ok_or_else(|| {
             tracing::warn!("received message for an unassigned partition, will consider this a retryable error");
-            ReplicationError::Recoverable(anyhow!("protocol error: received message for an unassigned partition"))
+            ConsumerError::Recoverable(anyhow!("protocol error: received message for an unassigned partition"))
         })?;
 
         tracing::info!("routing message to appropriate partition handler");
 
         tx.send((payload, msg.offset())).await.map_err(|err| {
             tracing::error!("received message for a partition for which processing has shutdown due to a downstream error, will consider this a fatal error");
-            ReplicationError::Fatal(anyhow!("partition processor failed: {}", err))
+            ConsumerError::Fatal(anyhow!("partition processor failed: {}", err))
         })?;
 
         Ok(())
@@ -295,7 +294,7 @@ fn handle_partition_messages<T: Handler>(
 
                                 break;
                             }
-                            Err(ReplicationError::Recoverable(err)) => {
+                            Err(ConsumerError::Recoverable(err)) => {
                                 tracing::warn!(
                                     "Handler reported a recoverable error: {}, we will simply retry the message after a delay",
                                     err
@@ -304,7 +303,7 @@ fn handle_partition_messages<T: Handler>(
                                 // this will block the current task
                                 tokio::time::sleep(Duration::from_secs(3)).await;
                             }
-                            Err(ReplicationError::Fatal(err)) => {
+                            Err(ConsumerError::Fatal(err)) => {
                                 // an unrecoverable error has occurred downstream
                                 // this implies either there is a bug in the downstream application
                                 // or the producer of the message is invalid. Either case warrants a sev_1 investigation
@@ -325,7 +324,7 @@ fn handle_partition_messages<T: Handler>(
     });
 }
 
-fn extract_payload<T: Handler>(msg: &BorrowedMessage) -> Result<T::Payload, ReplicationError> {
+fn extract_payload<T: Handler>(msg: &BorrowedMessage) -> Result<T::Payload, ConsumerError> {
     match msg.payload_view::<str>() {
         Some(Ok(payload)) => {
             tracing::info!("received a payload");
@@ -333,7 +332,7 @@ fn extract_payload<T: Handler>(msg: &BorrowedMessage) -> Result<T::Payload, Repl
 
             serde_json::from_str(payload).map_err(|_| {
                 tracing::error!("Unable to deserialize payload into expected handler payload type");
-                ReplicationError::Fatal(anyhow!(
+                ConsumerError::Fatal(anyhow!(
                     "Unable to deserialize payload into expected handler payload type"
                 ))
             })
@@ -343,11 +342,11 @@ fn extract_payload<T: Handler>(msg: &BorrowedMessage) -> Result<T::Payload, Repl
                 "Failed to parse message into intermediate utf8. This is a fatal error: {}",
                 err
             );
-            return Err(ReplicationError::Fatal(anyhow!("Invalid payload")));
+            return Err(ConsumerError::Fatal(anyhow!("Invalid payload")));
         }
         None => {
             tracing::error!("No payload received. This is a fatal error");
-            return Err(ReplicationError::Fatal(anyhow!("Invalid payload")));
+            return Err(ConsumerError::Fatal(anyhow!("Invalid payload")));
         }
     }
 }

@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use consumer::{Consumer, IdempotentApplication};
-use producer::{error::ReplicationError, ReplicationOp};
+use consumer::{Consumer, ConsumerError, IdempotentApplication};
+use producer::ReplicationOp;
 use sqlx::{Postgres, Transaction};
 use tracing_subscriber::EnvFilter;
 
@@ -14,7 +14,7 @@ impl IdempotentApplication for LoggerApp {
         &self,
         _tx: &mut Transaction<'_, Postgres>,
         op: &ReplicationOp,
-    ) -> Result<(), ReplicationError> {
+    ) -> Result<(), ConsumerError> {
         tracing::info!("handling message");
         tracing::info!("{:?}", op);
 
