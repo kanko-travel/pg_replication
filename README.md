@@ -82,7 +82,7 @@ Basic consumer is a naive, stateless consumer that processes each message in ord
 ```rust
 #[async_trait]
 pub trait BasicApplication: Send + Sync + 'static {
-    async fn handle_message(&self, _op: &ReplicationOp) -> Result<(), ConsumerError>;
+    async fn handle_message(&self, op: &ReplicationOp) -> Result<(), ConsumerError>;
 }
 ```
 
