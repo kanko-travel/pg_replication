@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-// use anyhow::anyhow;
 use async_trait::async_trait;
 use consumer::{Consumer, IdempotentApplication};
 use producer::{error::ReplicationError, ReplicationOp};

@@ -13,7 +13,7 @@ use producer::error::ReplicationError;
 use serde::Deserialize;
 use tokio::sync::{
     mpsc::{self, Receiver, Sender},
-    watch::{self, Receiver as WatchReceiver, Sender as WatchSender},
+    oneshot::{self, Receiver as OneshotReceiver, Sender as OneshotSender},
     RwLock,
 };
 
@@ -22,13 +22,13 @@ use crate::metrics::Metrics;
 pub struct KafkaConsumer<T: Handler> {
     consumer: Arc<StreamConsumer<KafkaConsumerContext<T>>>,
     partition_senders:
-        Arc<RwLock<HashMap<(String, i32), (Sender<(T::Payload, i64)>, WatchSender<bool>)>>>,
+        Arc<RwLock<HashMap<(String, i32), (Sender<(T::Payload, i64)>, OneshotSender<()>)>>>,
 }
 
 struct KafkaConsumerContext<T: Handler> {
     handler: Arc<T>,
     partition_senders:
-        Arc<RwLock<HashMap<(String, i32), (Sender<(T::Payload, i64)>, WatchSender<bool>)>>>,
+        Arc<RwLock<HashMap<(String, i32), (Sender<(T::Payload, i64)>, OneshotSender<()>)>>>,
     offset_tx: Sender<(String, i32, i64)>,
     metrics: Arc<Metrics>,
 }
@@ -76,7 +76,7 @@ impl<T: Handler> ConsumerContext for KafkaConsumerContext<T> {
                         tracing::info!("+ topic: {}, partition: {}", ass.topic(), ass.partition(),);
 
                         let (payload_tx, payload_rx) = mpsc::channel(1000000);
-                        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+                        let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
                         handle_partition_messages(
                             ass.topic().to_string(),
@@ -121,7 +121,7 @@ impl<T: Handler> ConsumerContext for KafkaConsumerContext<T> {
                         {
                             // if this fails it means the channel is closed and
                             // there is nothing to clean up, so we don't care
-                            let _ = shutdown_tx.send(true);
+                            let _ = shutdown_tx.send(());
                         }
                     }
                 });
@@ -200,10 +200,10 @@ impl<T: Handler> KafkaConsumer<T> {
             match self.consumer.recv().await {
                 Ok(msg) => self.route_message(&msg).await?,
                 Err(err) => {
-                    tracing::error!("Fatal kafka error: {}", err);
+                    tracing::error!("Potentially unrecoverable kafka error, will treat it as recoverable unless proven otherwise {}", err);
 
-                    return Err(ReplicationError::Fatal(anyhow!(
-                        "Fatal kafka error: {}",
+                    return Err(ReplicationError::Recoverable(anyhow!(
+                        "Unexpected Kafka error: {}",
                         err
                     )));
                 }
@@ -217,15 +217,15 @@ impl<T: Handler> KafkaConsumer<T> {
         // determine the partition to send the message to
         let partition_senders = self.partition_senders.read().await;
         let (tx, _) = partition_senders.get(&(msg.topic().to_string(), msg.partition())).ok_or_else(|| {
-            tracing::warn!("received message for partition that is not assigned to this consumer, will consider this a recoverable error");
-            ReplicationError::Recoverable(anyhow!("received message for unassigned partition"))
+            tracing::warn!("received message for an unassigned partition, will consider this a retryable error");
+            ReplicationError::Recoverable(anyhow!("protocol error: received message for an unassigned partition"))
         })?;
 
         tracing::info!("routing message to appropriate partition handler");
 
         tx.send((payload, msg.offset())).await.map_err(|err| {
-            tracing::warn!("send to partition handler channel failed. this is because the receiver has been closed by the handler, will consider this a recoverable error");
-            ReplicationError::Recoverable(anyhow!("send failed due to a closed partion handler channel: {}", err))
+            tracing::error!("received message for a partition for which processing has shutdown due to a downstream error, will consider this a fatal error");
+            ReplicationError::Fatal(anyhow!("partition processor failed: {}", err))
         })?;
 
         Ok(())
@@ -246,8 +246,9 @@ fn handle_committed_offsets<T: Handler>(
             );
 
             if let Err(err) = consumer.store_offset(&topic, partition, offset) {
-                tracing::warn!("failed to update offset store, this is considered a transient error, will carry on: {}", err);
-                // break;
+                // this is an expected error condition during rebalancing, with no bearing on the
+                // correctness of the programme. We will simply log this and carry on.
+                tracing::warn!("failed to update offset store, will carry on {}", err);
             }
         }
     });
@@ -258,7 +259,7 @@ fn handle_partition_messages<T: Handler>(
     partition: i32,
     handler: Arc<T>,
     mut payload_rx: Receiver<(T::Payload, i64)>,
-    mut shutdown_rx: WatchReceiver<bool>,
+    mut shutdown_rx: OneshotReceiver<()>,
     offset_tx: Sender<(String, i32, i64)>,
     metrics: Arc<Metrics>,
 ) {
@@ -315,18 +316,12 @@ fn handle_partition_messages<T: Handler>(
                         }
                     }
                 }
-                Ok(_) = shutdown_rx.changed() => {
+                _ = &mut shutdown_rx => {
                     tracing::info!("shutting down partition handler due to shutdown signal");
-                    break 'outer;
-                },
+                    break;
+                }
             }
         }
-
-        tracing::info!(
-            "shutting down processing for topic: {}, partition: {}",
-            topic,
-            partition
-        );
     });
 }
 

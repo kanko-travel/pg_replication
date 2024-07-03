@@ -52,7 +52,6 @@ impl ProducerContext for KafkaProducerContext {
                 // Since we set enable.gapless.guarantee to true, this case would ensure that attempting to process
                 // any messages queued after the failed message will result in a fatal error. Therefore, we can
                 // ignore this error and simply wait for a fatal error, which is handled in the main producer loop
-
                 tracing::error!(
                     "message delivery failed for message with offset = {}",
                     *delivery_opaque
@@ -110,18 +109,18 @@ impl KafkaProducer {
                             record = rec;
                             thread::sleep(Duration::from_millis(500));
                         }
-                        Err((e, _)) => {
+                        Err((err, _)) => {
+                            // the error may or may not be recoverable, we let the calling application decide whether
+                            // to reproduce the message by breaking out of the loop and dropping the msg_rx receiver
                             tracing::error!(
-                                "Potentially unrecoverable kafka error encountered, will not attempt to produce new messages"
+                                "Potentially unrecoverable kafka error encountered: {}, will not attempt to produce new messages", err
                             );
-
-                            tracing::error!("{:?}", e);
 
                             // breaking 'outer will cause the current task to exit, causing
                             // the receiver end of the message channel to be dropped,
                             // causing future sends to the message channel from the main task to fail
-                            // at which point a recoverable error will be emitted, which will cause
-                            // the programme to restart
+                            // at which point the caller may choose to treat it as a recoverable error
+                            // and restart
                             break 'outer;
                         }
                     }
