@@ -65,9 +65,8 @@ pub enum Op {
 pub type Row = Vec<Option<String>>;
 ```
 
-`col_names` is a list of column names (string) in the order in which row values appear.
-`lsn` is the log sequence number of the transaction that produced the record.
-`seq_id` is a number indicating the order of the operation within the transaction. It is monotonically increasing and increments by exactly one for each subsequent operation.
-`op` is one of Insert, Update or Delete and contains a Row, in the case of an Insert or Delete, or a tuple of (Row, Row) containing the old and new rows respectively.
-
-`Row` is a list of text encoded column values, where column values occur in the same order in the list as their names in `col_names`.
+- `col_names` is a list of column names (string) in the order in which row values appear.
+- `lsn` is the log sequence number of the transaction that produced the record.
+- `seq_id` is a number indicating the order of the operation within the transaction. It is monotonically increasing and increments by exactly one for each subsequent operation.
+- `op` is one of Insert, Update or Delete. It contains a `Row` in the case of an `Insert` or `Delete`, or a tuple of (`Row`, `Row`) representing the old and new rows respectively.
+- `Row` is a list of text encoded column values, where each column value occurs in the same position as its name in `col_names`.
