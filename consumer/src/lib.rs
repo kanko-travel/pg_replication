@@ -3,15 +3,15 @@ use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use basic_consumer::BasicConsumer;
 use idempotent_consumer::IdempotentConsumer;
-use kafka_concurrent_consumer::KafkaConcurrentConsumer;
+use kafka_consumer::KafkaConsumer;
 use producer::{error::ReplicationError, ReplicationOp};
 use sqlx::{Postgres, Transaction};
 
 mod basic_consumer;
 mod db;
 mod idempotent_consumer;
-mod kafka_concurrent_consumer;
 mod kafka_consumer;
+mod metrics;
 
 pub struct Consumer<App> {
     pub group_id: String,
@@ -71,7 +71,7 @@ impl<App: IdempotentApplication> Consumer<App> {
         let idempotent_consumer =
             IdempotentConsumer::new(&self.group_id, connection_string, self.app.clone()).await?;
 
-        let mut kafka_consumer = KafkaConcurrentConsumer::new(
+        let kafka_consumer = KafkaConsumer::new(
             &self.group_id,
             &self.brokers,
             &self.topics,
@@ -103,12 +103,8 @@ impl<App: BasicApplication> Consumer<App> {
     async fn start_basic_consumer(&self) -> Result<(), ReplicationError> {
         let basic_consumer = BasicConsumer::new(self.app.clone());
 
-        let mut kafka_consumer = KafkaConcurrentConsumer::new(
-            &self.group_id,
-            &self.brokers,
-            &self.topics,
-            basic_consumer,
-        )?;
+        let kafka_consumer =
+            KafkaConsumer::new(&self.group_id, &self.brokers, &self.topics, basic_consumer)?;
         kafka_consumer.consume().await
     }
 }
