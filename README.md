@@ -1,5 +1,5 @@
 # PG Replication
-A lightweight logical replication library for Postgres consisting of `producer` and `consumer` crates. 
+A lightweight postgres logical replication library for Rust consisting of `producer` and `consumer` crates. 
 
 ## Producer
 The producer reads from a designated logical replication slot and writes records for all tables in a given publication to kafka, according to a custom mapping from each table to a kafka topic.
