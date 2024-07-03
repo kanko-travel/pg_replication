@@ -37,7 +37,6 @@ fn main() {
       topic_map,
   );
 
-  tracing::info!("starting producer");
   producer.start().await.unwrap();
 }
 ```
